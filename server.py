@@ -1,9 +1,15 @@
 import socket
+import time
 import utils
 from utils import States
 
 UDP_IP = "127.0.0.1"
 UDP_PORT = 5005
+
+# some global states
+my_next_seq = -1
+client_next_seq = -1
+client_addr = None
 
 # initial server_state
 server_state = States.CLOSED
@@ -44,18 +50,89 @@ while True:
     # if received message is a syn message, it's a connection
     # initiation
     if header.syn == 1:
-      seq_number = utils.rand_int() # we randomly pick a sequence number
-      ack_number = header.seq_num + 1
-      # to be implemented
+      # update seq numbers
+      my_next_seq = utils.rand_int() # we randomly pick a sequence number
+      client_next_seq = header.seq_num + 1
+      # update client addr
+      client_addr = addr
 
-      ### sending message from the server:
-      #   use the following method to send messages back to client
-      #   addr is recieved when we receive a message from a client (see above)
-      #   sock.sendto(your_header_object.bits(), addr)
+      # make a syn-ack header and send to to client
+      syn_ack_header = utils.Header(my_next_seq, client_next_seq, syn=1, ack=1, fin=0)
+      sock.sendto(syn_ack_header.bits(), client_addr)
+      # update my seq number
+      my_next_seq += 1
+      # update server state
+      update_server_state(States.SYN_RECEIVED)
+    else:
+      # discard non-SYN messages
+      pass
 
   elif server_state == States.SYN_RECEIVED:
-    pass
-  elif server_state == States.SYN_SENT:
-    pass
+    # we are waiting for a message
+    header, body, addr = recv_msg()
+    # we only receive message from our client addr
+    # and we only expect a ACK message
+    if addr == client_addr and header.ack == 1:
+        # check if seq numbers are synchronized
+        if my_next_seq == header.ack_num and client_next_seq == header.seq_num:
+            # connection established on the server's perspective
+            # update client next seq and server state
+            client_next_seq += 1
+            update_server_state(States.ESTABLISHED)
+        else:
+            # client server seq number doesn't match, close connection
+            my_next_seq = -1
+            client_next_seq = -1
+            client_addr = None
+            update_server_state(States.CLOSED)
+    else:
+        # unexpected messages
+        pass
+
+  elif server_state == States.ESTABLISHED:
+      # we are waiting for a message
+      header, body, addr = recv_msg()
+      if addr == client_addr and header.fin == 1:
+          # client initiate a termination
+          # update client seq
+          client_next_seq = header.seq_num + 1
+          # send ack message
+          ack_header = utils.Header(my_next_seq, client_next_seq, syn=0, ack=1, fin=0)
+          sock.sendto(ack_header.bits(), client_addr)
+          # update my seq number
+          my_next_seq += 1
+          # update server state
+          update_server_state(States.CLOSE_WAIT)
+      else:
+          # unexpected messages
+          pass
+
+  elif  server_state == States.CLOSE_WAIT:
+      # wait for application to be ready to end
+      # in this test case, we just wait for 1 seconds
+      time.sleep(1)
+      # now that app running on the server side is ready to close
+      # we send a FIN to client
+      fin_header = utils.Header(my_next_seq, 0, syn=0, ack=0, fin=1)
+      sock.sendto(fin_header.bits(), client_addr)
+      # update my seq number
+      my_next_seq += 1
+      # update server state
+      update_server_state(States.LAST_ACK)
+
+  elif  server_state == States.LAST_ACK:
+      # we are waiting for a ack message
+      header, body, addr = recv_msg()
+      if addr == client_addr and header.ack == 1:
+          # received client 's final ack
+          # clear server state
+          my_next_seq = -1
+          client_next_seq = -1
+          client_addr = None
+          update_server_state(States.CLOSED)
+      else:
+          # unexpected messages
+          pass
   else:
-    pass
+    raise RuntimeError("invalid server states")
+

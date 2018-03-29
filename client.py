@@ -10,6 +10,7 @@ import utils
 UDP_IP = "127.0.0.1"
 UDP_PORT = 5005
 MSS = 12 # maximum segment size
+MSL = 120 # maximum segment lifetime - 120 sec
 
 sock = socket.socket(socket.AF_INET,    # Internet
                      socket.SOCK_DGRAM) # UDP
@@ -20,21 +21,99 @@ def send_udp(message):
 class Client:
   def __init__(self):
     self.client_state = States.CLOSED
+    self.my_next_seq = -1
+    self.server_next_seq = -1
     self.handshake()
 
   def handshake(self):
     if self.client_state == States.CLOSED:
       seq_num = utils.rand_int()
-      syn_header = utils.Header(seq_num, 0, syn = 1, ack = 0)
+      syn_header = utils.Header(seq_num, 0, syn = 1, ack = 0, fin=0)
       # for this case we send only header;
       # if you need to send data you will need to append it
       send_udp(syn_header.bits())
+      # update client seq number
+      self.my_next_seq = seq_num + 1
       self.update_state(States.SYN_SENT)
     else:
-      pass
+      raise  RuntimeError("invalid states for start a handshake.")
+
+    # we wait for server to send back a SYN-ACK message
+    if self.client_state == States.SYN_SENT:
+      recv_data, addr = sock.recvfrom(1024)
+      header = utils.bits_to_header(recv_data)
+      # server syn header should have both syn and ack fields
+      # and the ack_num should be client next sequence number
+      if header.ack == 1 and header.syn == 1 and header.ack_num == self.my_next_seq:
+        self.server_next_seq = header.seq_num + 1
+      else:
+        raise RuntimeError("invalid server SYN-reply, handshake failed.")
+
+      # we send back ACK message
+      ack_header = utils.Header(self.my_next_seq, self.server_next_seq, syn = 0, ack = 1, fin=0)
+      send_udp(ack_header.bits())
+      # update my seq
+      self.my_next_seq += 1
+      # update state -> connection established on the client's perspective
+      self.update_state(States.ESTABLISHED)
+    else:
+      raise RuntimeError("invalid states for waiting server SYN-reply.")
 
   def terminate(self):
-    pass
+    if self.client_state == States.ESTABLISHED:
+      # send FIN message
+      fin_header = utils.Header(self.my_next_seq, 0, syn=0, ack=0, fin=1)
+      send_udp(fin_header.bits())
+      # update my seq
+      self.my_next_seq += 1
+      # update state
+      self.update_state(States.FIN_WAIT_1)
+    else:
+      raise RuntimeError("invalid states for termination")
+
+    # wait for ack
+    if self.client_state == States.FIN_WAIT_1:
+      recv_data, addr = sock.recvfrom(1024)
+      header = utils.bits_to_header(recv_data)
+      if header.ack == 1 and header.ack_num == self.my_next_seq:
+        # update server seq
+        self.server_next_seq = header.seq_num + 1
+        # update client state
+        self.update_state(States.FIN_WAIT_2)
+      else:
+        raise RuntimeError("invalid server ack")
+    else:
+      raise RuntimeError("invalid states for termination")
+
+    # wait for server FIN and send back a ACK
+    if self.client_state == States.FIN_WAIT_2:
+      recv_data, addr = sock.recvfrom(1024)
+      header = utils.bits_to_header(recv_data)
+      if header.fin == 1:
+        # update server seq
+        self.server_next_seq = header.seq_num + 1
+        # send back a ack
+        ack_header = utils.Header(self.my_next_seq, self.server_next_seq, syn=0, ack=1, fin=0)
+        send_udp(ack_header.bits())
+        # update client seq
+        self.my_next_seq += 1
+        # update client state
+        self.update_state(States.TIME_WAIT)
+      else:
+        raise RuntimeError("invalid server fin")
+    else:
+      raise RuntimeError("invalid states for termination")
+
+    # wait for 2 maximum segment life time then close the client
+    if self.client_state == States.TIME_WAIT:
+      time.sleep(2 * MSL)
+
+      self.my_next_seq = -1
+      self.server_next_seq = -1
+      self.update_state(States.CLOSED)
+    else:
+      raise RuntimeError("invalid states for termination")
+
 
   def update_state(self, new_state):
     if utils.DEBUG:
