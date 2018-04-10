@@ -24,6 +24,8 @@ complete code within the infinite loop
 
 ## Milestone 2 Modifications
 
-Add three protocol Enums -> STOP_AND_WAIT, GO_BACK_N
+Add two protocol Enums -> STOP_AND_WAIT, GO_BACK_N
 
 To test a specific protocol, please modify the global variable PROTOCOL located on the very first line of client.py and server.py.
+
+some modifications to complete stop_and_wait, go_back_n flow control logic
