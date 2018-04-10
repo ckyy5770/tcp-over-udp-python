@@ -6,6 +6,8 @@ from utils import Protocols
 
 PROTOCOL = Protocols.STOP_AND_WAIT
 
+whole_received_message = ""
+
 UDP_IP = "127.0.0.1"
 UDP_PORT = 5005
 
@@ -113,7 +115,9 @@ while True:
               # if the seq number is the number we expected, receive the message and ack it
               if header.seq_num == client_next_seq:
                   # print the received message in
-                  print(body)
+                  if utils.DEBUG == True:
+                      print(body)
+                      whole_received_message += body
                   # update client next seq
                   client_next_seq += 1
                   # send ack message
@@ -121,6 +125,43 @@ while True:
                   sock.sendto(ack_header.bits(), client_addr)
                   # update my seq number
                   my_next_seq += 1
+              elif header.seq_num < client_next_seq:
+                  # we already received this package, but the sender retransmitted it,
+                  # this happens when ack message is missed by client
+                  # send ack message
+                  ack_header = utils.Header(my_next_seq, header.seq_num + 1, syn=0, ack=1, fin=0)
+                  sock.sendto(ack_header.bits(), client_addr)
+                  # update my seq number
+                  my_next_seq += 1
+              else:
+                  # unexpected messages
+                  pass
+          elif PROTOCOL == Protocols.GO_BACK_N:
+              # received a non-termination message from client
+              # if the seq number is the number we expected, receive the message and ack it
+              if header.seq_num == client_next_seq:
+                  # print the received message in
+                  if utils.DEBUG == True:
+                      print(body)
+                      whole_received_message += body
+                  # update client next seq
+                  client_next_seq += 1
+                  # send ack message
+                  ack_header = utils.Header(my_next_seq, client_next_seq, syn=0, ack=1, fin=0)
+                  sock.sendto(ack_header.bits(), client_addr)
+                  # update my seq number
+                  my_next_seq += 1
+              elif header.seq_num < client_next_seq:
+                  # we already received this package, but the sender retransmitted it,
+                  # this happens when ack message is missed by client
+                  # send ack message
+                  ack_header = utils.Header(my_next_seq, header.seq_num + 1, syn=0, ack=1, fin=0)
+                  sock.sendto(ack_header.bits(), client_addr)
+                  # update my seq number
+                  my_next_seq += 1
+              else:
+                  # unexpected messages
+                  pass
       else:
           # unexpected messages
           pass
@@ -148,9 +189,12 @@ while True:
           client_next_seq = -1
           client_addr = None
           update_server_state(States.CLOSED)
+
+          #### we can print the whole message received during the session
+          if utils.DEBUG == True:
+            print("whole message received: \n" + whole_received_message + "\n")
       else:
           # unexpected messages
           pass
   else:
     raise RuntimeError("invalid server states")
-

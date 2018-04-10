@@ -10,6 +10,7 @@ import time
 import utils
 
 PROTOCOL = Protocols.STOP_AND_WAIT
+SENDER_WINDOW_SIZE = 10
 
 UDP_IP = "127.0.0.1"
 UDP_PORT = 5005
@@ -149,23 +150,65 @@ class Client:
         print(self.client_state)
         if current_seg >= len(messages):
           break
+    elif PROTOCOL == Protocols.GO_BACK_N:
+      current_seg = 0
+      while True:
+        for i in range(0, SENDER_WINDOW_SIZE):
+            if current_seg + i < len(messages):
+                # send a full window size of messages at a time
+                header = utils.Header(self.my_next_seq + i, 0, syn = 0, ack = 0, fin=0)
+                seg = header.bits() + messages[current_seg + i].encode()
+                send_udp(seg)
+
+        # wait for acks for one second
+        lra = self.last_received_ack
+        self.receive_acks()
+
+        # received acks, move the window
+        if lra != self.last_received_ack:
+          moved = self.last_received_ack - lra
+          self.my_next_seq += moved
+          current_seg += moved
+
+        # check if this is the last seg
+        if current_seg >= len(messages):
+          break
     else:
       raise RuntimeError("invalid transmission protocol")
 
 
   # received one ack for stop and wait protocol
   def receive_acks_sub_process_stop_and_wait(self, lst_rec_ack_shared):
-    print("here")
     while True:
-      print("here2")
       recv_data, addr = sock.recvfrom(1024)
       header = utils.bits_to_header(recv_data)
-      print(header.ack_num)
-      print("vs")
-      print(lst_rec_ack_shared.value)
       if header.ack == 1 and header.ack_num == lst_rec_ack_shared.value + 1:
         lst_rec_ack_shared.value = header.ack_num
         break
+
+  # receive multiple acks for go back n protocol
+  def receive_acks_sub_process_go_back_n(self, lst_rec_ack_shared):
+    lra = lst_rec_ack_shared.value
+    # a list marks which message is acked
+    acked = [0] * (SENDER_WINDOW_SIZE + 1)
+    # a pointer points to current window side
+    cur = 0
+    while True:
+      recv_data, addr = sock.recvfrom(1024)
+      header = utils.bits_to_header(recv_data)
+      if header.ack == 1 and header.ack_num > lra and header.ack_num <= lra + SENDER_WINDOW_SIZE:
+          # mark this ack
+          acked[header.ack_num - lra] = 1
+          # move the pointer if possible
+          while cur < SENDER_WINDOW_SIZE and acked[cur + 1] == 1:
+              cur += 1
+              # reset lst_rec_ack
+              lst_rec_ack_shared.value += 1
+          if cur == SENDER_WINDOW_SIZE:
+            # now we received all acks
+            break
+
+
 
 
   # these two methods/function can be used receive messages from
@@ -184,32 +227,31 @@ class Client:
     while True:
       recv_data, addr = sock.recvfrom(1024)
       header = utils.bits_to_header(recv_data)
-      if header.ack_num > lst_rec_ack_shared.value:
+      if header.ack == 1 and header.ack_num > lst_rec_ack_shared.value:
         lst_rec_ack_shared.value = header.ack_num
 
   def receive_acks(self):
     # Start receive_acks_sub_process as a process
     lst_rec_ack_shared = Value('i', self.last_received_ack)
-    #p=0
-    #if PROTOCOL == Protocols.STOP_AND_WAIT:
-    p = multiprocessing.Process(target=self.receive_acks_sub_process_stop_and_wait, args=(self, lst_rec_ack_shared,))
-      #p = multiprocessing.Process(target=self.receive_acks_sub_process, args=(lst_rec_ack_shared,))
+    p=0
+    if PROTOCOL == Protocols.STOP_AND_WAIT:
+      p = multiprocessing.Process(target=self.receive_acks_sub_process_stop_and_wait, args=(lst_rec_ack_shared,))
+    elif PROTOCOL == Protocols.GO_BACK_N:
+      p = multiprocessing.Process(target=self.receive_acks_sub_process_go_back_n, args=(lst_rec_ack_shared,))
     p.start()
-    print("hello")
     # Wait for 1 seconds or until process finishes
-    p.join(10)
+    p.join(1)
     # If process is still active, we kill it
     if p.is_alive():
-      print("hello3")
       p.terminate()
       p.join()
-    print("hello2")
     # here you can update your client's instance variables.
     self.last_received_ack = lst_rec_ack_shared.value
 
 # we create a client, which establishes a connection
 client = Client()
 # we send a message
-client.send_reliable_message("This message is to be received in pieces")
+#client.send_reliable_message("This message is to be received in pieces")
+client.send_reliable_message(str(list(range(1,100))))
 # we terminate the connection
-#client.terminate()
+client.terminate()

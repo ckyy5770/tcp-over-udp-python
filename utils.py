@@ -10,7 +10,7 @@ class States(Enum):
 	, SYN_RECEIVED, SYN_SENT, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, TIME_WAIT, CLOSE_WAIT, LAST_ACK = range(1, 11)
 
 class Protocols(Enum):
-	STOP_AND_WAIT, GO_BACK_N, SLIDING_WINDOW = range(1, 4)
+	STOP_AND_WAIT, GO_BACK_N, SELECTIVE_REPEAT = range(1, 4)
 
 class Header:
 	def __init__(self, seq_num, ack_num, syn, ack, fin):
