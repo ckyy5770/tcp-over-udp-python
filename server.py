@@ -2,6 +2,9 @@ import socket
 import time
 import utils
 from utils import States
+from utils import Protocols
+
+PROTOCOL = Protocols.STOP_AND_WAIT
 
 UDP_IP = "127.0.0.1"
 UDP_PORT = 5005
@@ -103,6 +106,21 @@ while True:
           my_next_seq += 1
           # update server state
           update_server_state(States.CLOSE_WAIT)
+      elif addr == client_addr:
+          # stop and wait protocol
+          if PROTOCOL == Protocols.STOP_AND_WAIT:
+              # received a non-termination message from client
+              # if the seq number is the number we expected, receive the message and ack it
+              if header.seq_num == client_next_seq:
+                  # print the received message in
+                  print(body)
+                  # update client next seq
+                  client_next_seq += 1
+                  # send ack message
+                  ack_header = utils.Header(my_next_seq, client_next_seq, syn=0, ack=1, fin=0)
+                  sock.sendto(ack_header.bits(), client_addr)
+                  # update my seq number
+                  my_next_seq += 1
       else:
           # unexpected messages
           pass

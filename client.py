@@ -1,11 +1,15 @@
 from multiprocessing import Value
 from threading import Timer
+from threading import Thread
 from utils import States
+from utils import Protocols
 import multiprocessing
 import random
 import socket
 import time
 import utils
+
+PROTOCOL = Protocols.STOP_AND_WAIT
 
 UDP_IP = "127.0.0.1"
 UDP_PORT = 5005
@@ -23,6 +27,7 @@ class Client:
     self.client_state = States.CLOSED
     self.my_next_seq = -1
     self.server_next_seq = -1
+    self.last_received_ack = -1
     self.handshake()
 
   def handshake(self):
@@ -46,6 +51,7 @@ class Client:
       # and the ack_num should be client next sequence number
       if header.ack == 1 and header.syn == 1 and header.ack_num == self.my_next_seq:
         self.server_next_seq = header.seq_num + 1
+        self.last_received_ack = header.ack_num + 1
       else:
         raise RuntimeError("invalid server SYN-reply, handshake failed.")
 
@@ -121,9 +127,46 @@ class Client:
     self.client_state = new_state
 
   def send_reliable_message(self, message):
+    # divide the message into pieces according to MSS
+    messages = [message[i:i+MSS] for i in range(0, len(message), MSS)]
     # send messages
     # we loop/wait until we receive all ack.
-    pass
+    if PROTOCOL == Protocols.STOP_AND_WAIT:
+      current_seg = 0
+      while True:
+        lra = self.last_received_ack
+        # send one message and expect one ack
+        header = utils.Header(self.my_next_seq, 0, syn = 0, ack = 0, fin=0)
+        seg = header.bits() + messages[current_seg].encode()
+        send_udp(seg)
+        # receive ack for one second
+        self.receive_acks()
+        # received ack, update states, else, just resend the message in the next loop
+        if lra != self.last_received_ack:
+          self.my_next_seq += 1
+          current_seg += 1
+        # check if this is the last seg
+        print(self.client_state)
+        if current_seg >= len(messages):
+          break
+    else:
+      raise RuntimeError("invalid transmission protocol")
+
+
+  # received one ack for stop and wait protocol
+  def receive_acks_sub_process_stop_and_wait(self, lst_rec_ack_shared):
+    print("here")
+    while True:
+      print("here2")
+      recv_data, addr = sock.recvfrom(1024)
+      header = utils.bits_to_header(recv_data)
+      print(header.ack_num)
+      print("vs")
+      print(lst_rec_ack_shared.value)
+      if header.ack == 1 and header.ack_num == lst_rec_ack_shared.value + 1:
+        lst_rec_ack_shared.value = header.ack_num
+        break
+
 
   # these two methods/function can be used receive messages from
   # server. the reason we need such mechanism is `recv` blocking
@@ -143,17 +186,24 @@ class Client:
       header = utils.bits_to_header(recv_data)
       if header.ack_num > lst_rec_ack_shared.value:
         lst_rec_ack_shared.value = header.ack_num
+
   def receive_acks(self):
     # Start receive_acks_sub_process as a process
     lst_rec_ack_shared = Value('i', self.last_received_ack)
-    p = multiprocessing.Process(target=self.receive_acks_sub_process, args=(lst_rec_ack_shared,))
+    #p=0
+    #if PROTOCOL == Protocols.STOP_AND_WAIT:
+    p = multiprocessing.Process(target=self.receive_acks_sub_process_stop_and_wait, args=(self, lst_rec_ack_shared,))
+      #p = multiprocessing.Process(target=self.receive_acks_sub_process, args=(lst_rec_ack_shared,))
     p.start()
+    print("hello")
     # Wait for 1 seconds or until process finishes
-    p.join(1)
+    p.join(10)
     # If process is still active, we kill it
     if p.is_alive():
+      print("hello3")
       p.terminate()
       p.join()
+    print("hello2")
     # here you can update your client's instance variables.
     self.last_received_ack = lst_rec_ack_shared.value
 
@@ -162,4 +212,4 @@ client = Client()
 # we send a message
 client.send_reliable_message("This message is to be received in pieces")
 # we terminate the connection
-client.terminate()
+#client.terminate()

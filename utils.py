@@ -9,6 +9,9 @@ class States(Enum):
 	CLOSED, LISTEN \
 	, SYN_RECEIVED, SYN_SENT, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, TIME_WAIT, CLOSE_WAIT, LAST_ACK = range(1, 11)
 
+class Protocols(Enum):
+	STOP_AND_WAIT, GO_BACK_N, SLIDING_WINDOW = range(1, 4)
+
 class Header:
 	def __init__(self, seq_num, ack_num, syn, ack, fin):
 		self.seq_num = seq_num
@@ -60,3 +63,20 @@ def pretty_bits_print(bits):
 # to make it easier to keep track of for the assignment
 def rand_int(power=5):
 	return random.randint(0,(2 ** power)-1)
+
+
+# string to/from bits
+def tobits(s):
+    result = []
+    for c in s:
+        bits = bin(ord(c))[2:]
+        bits = '00000000'[len(bits):] + bits
+        result.extend([int(b) for b in bits])
+    return result
+
+def frombits(bits):
+    chars = []
+    for b in range(len(bits) / 8):
+        byte = bits[b*8:(b+1)*8]
+        chars.append(chr(int(''.join([str(bit) for bit in byte]), 2)))
+    return ''.join(chars)
